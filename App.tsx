@@ -783,10 +783,16 @@ const App: React.FC = () => {
         return {
           ...img,
           prompt: newPrompt,
+          status: ImageStatus.QUEUED,
+          error: undefined,
+          retried: undefined,
         };
       }
       return img;
     }));
+    if (isProcessing) {
+        setTotalInBatch(prev => prev + 1);
+    }
   };
 
   const handleUseEditedAsOriginal = (imageId: string) => {
@@ -855,9 +861,7 @@ const App: React.FC = () => {
 
   const handleClearAll = () => {
     if (images.length === 0 || isProcessing) return;
-    if (window.confirm(`Are you sure you want to remove all ${images.length} image(s)? This cannot be undone.`)) {
-      setImages([]);
-    }
+    setImages([]);
   };
 
   const handleClearQueue = () => {
