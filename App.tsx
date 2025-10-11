@@ -92,7 +92,7 @@ const compressImageToPNG = (dataUrl: string): Promise<string> => {
 
 const App: React.FC = () => {
   const [images, setImages] = useState<ImageFile[]>([]);
-  const [currentPrompt, setCurrentPrompt] = useState<string>('solo, 1girl, from_front, eye_level, looking_at_viewer, facing viewer, straight-on, masterpiece, best quality, keep original art style, keep original character design, keep original features, keep original clothing, ');
+  const [currentPrompt, setCurrentPrompt] = useState<string>('masterpiece, best quality, keep original art style, keep original character design, keep original features, keep original clothing, ');
   const [promptHistory, setPromptHistory] = useState<string[]>(() => {
     try {
       const savedHistory = safeLocalStorage.getItem('promptHistory');
@@ -126,10 +126,10 @@ const App: React.FC = () => {
   const [randomizeSources, setRandomizeSources] = useState({
     angle: false,
     closeup: false,
-    pose: false,
+    pose: true,
     expression: true,
     bodyParts: false,
-    fullBody: true,
+    fullBody: false,
     textToVideo: false
   });
   const [totalInBatch, setTotalInBatch] = useState<number>(0);
@@ -1562,6 +1562,7 @@ const App: React.FC = () => {
                 isProcessing={isSingleProcessing}
                 globalPrompt={currentPrompt}
                 error={singleProcessingError}
+                taggingSystemPrompt={taggingSystemPrompt}
             />
         )}
 

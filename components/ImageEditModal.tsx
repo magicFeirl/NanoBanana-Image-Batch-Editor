@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { ImageFile, EditHistory } from '../types';
-import { ExclamationTriangleIcon, SparklesIcon, ReplaceIcon, DownloadIcon } from './Icons';
-import { enhancePrompt } from '../services/geminiService';
+import { ExclamationTriangleIcon, SparklesIcon, ReplaceIcon, DownloadIcon, TagIcon } from './Icons';
+import { enhancePrompt, getTagsFromImage } from '../services/geminiService';
+import { promptSuggestionsEditing, PromptSuggestion } from '../prompts';
 
 interface ImageEditModalProps {
   image: ImageFile | null;
@@ -13,15 +14,18 @@ interface ImageEditModalProps {
   isProcessing: boolean;
   globalPrompt: string;
   error?: string | null;
+  taggingSystemPrompt: string;
 }
 
-const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose, onProcess, onSavePrompt, isProcessing, globalPrompt, error }) => {
+const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose, onProcess, onSavePrompt, isProcessing, globalPrompt, error, taggingSystemPrompt }) => {
   const [activeImageUrl, setActiveImageUrl] = useState('');
   const [activePrompt, setActivePrompt] = useState('');
   const [activeTimestamp, setActiveTimestamp] = useState<number | null>(null);
   const [originalPrompt, setOriginalPrompt] = useState<string | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
-  const [enhanceError, setEnhanceError] = useState<string | null>(null);
+  const [isTagging, setIsTagging] = useState(false);
+  const [promptHelperError, setPromptHelperError] = useState<string | null>(null);
+  const [autoTagBeforeSingleProcess, setAutoTagBeforeSingleProcess] = useState(true);
 
 
   useEffect(() => {
@@ -34,7 +38,8 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
       setActivePrompt(image.prompt || globalPrompt || '');
       setOriginalPrompt(null);
       setIsEnhancing(false);
-      setEnhanceError(null);
+      setIsTagging(false);
+      setPromptHelperError(null);
 
       if (sourceImageUrl === image.originalDataUrl) {
         setActiveTimestamp(0);
@@ -47,8 +52,62 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
 
   if (!image) return null;
 
-  const handleProcess = () => {
-    onProcess(image.id, activePrompt, activeImageUrl);
+  const generateTagsForCurrentImage = async (): Promise<string | null> => {
+    if (!image) return null;
+    setIsTagging(true);
+    setPromptHelperError(null);
+    try {
+        const base64Data = activeImageUrl.split(',')[1];
+        if (!base64Data) throw new Error('Invalid image data URL.');
+
+        const tags = await getTagsFromImage(
+            base64Data,
+            image.file.type,
+            taggingSystemPrompt
+        );
+
+        const cleanedTags = tags.replace(/\.$/, '').trim();
+        const allTags = cleanedTags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+        const uniqueTags = [...new Set(allTags)].join(', ');
+        return uniqueTags;
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Failed to generate tags.";
+        setPromptHelperError(errorMessage);
+        return null;
+    } finally {
+        setIsTagging(false);
+    }
+  };
+
+  const handleAutoTagButtonClick = async () => {
+    if (isTagging || isEnhancing) return;
+    const generatedTags = await generateTagsForCurrentImage();
+    if (generatedTags) {
+        setActivePrompt(prev => {
+            const existingTags = new Set(prev.trim().split(/, ?/g).filter(Boolean));
+            const newTags = generatedTags.split(/, ?/g).filter(Boolean);
+            newTags.forEach(t => existingTags.add(t));
+            return Array.from(existingTags).join(', ');
+        });
+    }
+  };
+
+  const handleProcess = async () => {
+    let finalPrompt = activePrompt;
+    if (autoTagBeforeSingleProcess) {
+        const generatedTags = await generateTagsForCurrentImage();
+        if (generatedTags) {
+            const existingTags = new Set(activePrompt.trim().split(/, ?/g).filter(Boolean));
+            const newTags = generatedTags.split(/, ?/g).filter(Boolean);
+            newTags.forEach(t => existingTags.add(t));
+            finalPrompt = Array.from(existingTags).join(', ');
+            setActivePrompt(finalPrompt); // Update UI before processing
+        } else {
+            console.error("Auto-tagging failed, processing with existing prompt.");
+            // Error message is shown via promptHelperError state
+        }
+    }
+    await onProcess(image.id, finalPrompt, activeImageUrl);
   };
   
   const handleSave = () => {
@@ -59,18 +118,18 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
   };
   
   const handleEnhancePrompt = async () => {
-    if (!activePrompt.trim() || isEnhancing) return;
+    if (!activePrompt.trim() || isEnhancing || isTagging) return;
 
     const promptToEnhance = activePrompt;
     setIsEnhancing(true);
-    setEnhanceError(null);
+    setPromptHelperError(null);
     setOriginalPrompt(promptToEnhance);
     try {
       const enhanced = await enhancePrompt(promptToEnhance);
       setActivePrompt(enhanced);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to enhance prompt.";
-      setEnhanceError(errorMessage);
+      setPromptHelperError(errorMessage);
       setActivePrompt(promptToEnhance);
       setOriginalPrompt(null);
     } finally {
@@ -82,7 +141,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
     if (originalPrompt !== null) {
       setActivePrompt(originalPrompt);
       setOriginalPrompt(null);
-      setEnhanceError(null);
+      setPromptHelperError(null);
     }
   };
   
@@ -122,7 +181,29 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
     setActiveImageUrl(item.dataUrl);
     setActivePrompt(item.timestamp === 0 ? (image.prompt || globalPrompt || '') : item.prompt);
     setActiveTimestamp(item.timestamp);
-  }
+  };
+
+  const handleSuggestionSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedValue = e.target.value;
+    if (!selectedValue) return;
+
+    const selectedSuggestion = promptSuggestionsEditing.find(p => p.value === selectedValue);
+
+    if (selectedSuggestion) {
+        const newPrompt = selectedSuggestion.value;
+        
+        setActivePrompt(prevPrompt => {
+            if (!prevPrompt.trim()) {
+                return newPrompt;
+            }
+            const existingTags = prevPrompt.split(',').map(tag => tag.trim()).filter(Boolean);
+            const newTags = newPrompt.split(',').map(tag => tag.trim()).filter(Boolean);
+            const combinedTags = new Set([...existingTags, ...newTags]);
+            return Array.from(combinedTags).join(', ');
+        });
+    }
+    e.target.value = ''; // Reset select
+  };
 
   return (
     <div 
@@ -160,31 +241,72 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
               <img src={activeImageUrl} alt="Editing source" className="max-w-full max-h-full object-contain" />
             </div>
             <div className="mt-6 flex-shrink-0 flex flex-col">
-              <div className="flex justify-between items-center mb-2">
+              <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
                 <label htmlFor="image-prompt" className="block text-lg font-semibold text-gray-200">
                   Editing Prompt
                 </label>
-                {originalPrompt === null ? (
-                  <button
-                    onClick={handleEnhancePrompt}
-                    disabled={isProcessing || isEnhancing || !activePrompt.trim()}
-                    className="flex items-center px-3 py-1 text-sm font-semibold text-white bg-gradient-to-r from-brand-purple to-purple-700 rounded-md hover:from-purple-600 hover:to-purple-800 transition-all transform hover:scale-105 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed disabled:scale-100"
-                    title="Use AI to improve and expand your prompt"
-                  >
-                    <SparklesIcon className={`w-4 h-4 mr-2 ${isEnhancing ? 'animate-pulse' : ''}`} />
-                    {isEnhancing ? 'Enhancing...' : 'Enhance Prompt'}
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleRevertPrompt}
-                    disabled={isProcessing || isEnhancing}
-                    className="flex items-center px-3 py-1 text-sm font-semibold text-gray-200 bg-gray-600 rounded-md hover:bg-gray-500 transition-colors disabled:opacity-50"
-                    title="Revert to your original prompt"
-                  >
-                    <ReplaceIcon className="w-4 h-4 mr-2" />
-                    Revert
-                  </button>
-                )}
+                <div className="flex items-center space-x-2">
+                    <select
+                        id="modal-prompt-select-editing"
+                        value=""
+                        onChange={handleSuggestionSelect}
+                        className="p-1.5 text-sm bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors"
+                        aria-label="Select a preset editing prompt to append"
+                    >
+                        <option value="" disabled>Append Preset...</option>
+                        {promptSuggestionsEditing.map((p) => (
+                            <option key={p.label} value={p.value}>
+                                {p.label}
+                            </option>
+                        ))}
+                    </select>
+                    <div className="flex items-center p-1 rounded-md bg-gray-900/50 border border-gray-700">
+                        <button
+                          onClick={handleAutoTagButtonClick}
+                          disabled={isProcessing || isTagging || isEnhancing}
+                          className="flex items-center px-2 py-0.5 text-sm font-semibold text-white bg-gradient-to-r from-teal-500 to-cyan-600 rounded-md hover:from-teal-600 hover:to-cyan-700 transition-all transform hover:scale-105 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed disabled:scale-100"
+                          title="Generate tags from the current image and prepend them to the prompt"
+                        >
+                          <TagIcon className={`w-4 h-4 mr-2 ${isTagging ? 'animate-pulse' : ''}`} />
+                          {isTagging ? 'Tagging...' : 'Auto Tag'}
+                        </button>
+                        <div className="h-5 w-px bg-gray-600 mx-2"></div>
+                        <div className="flex items-center pr-1">
+                              <input
+                                  type="checkbox"
+                                  id="autoTagBeforeSingleProcess"
+                                  checked={autoTagBeforeSingleProcess}
+                                  onChange={(e) => setAutoTagBeforeSingleProcess(e.target.checked)}
+                                  disabled={isProcessing || isTagging || isEnhancing}
+                                  className="h-4 w-4 rounded border-gray-500 bg-gray-800 text-teal-500 focus:ring-teal-500"
+                              />
+                              <label htmlFor="autoTagBeforeSingleProcess" className="ml-2 block text-xs text-gray-400 select-none cursor-pointer whitespace-nowrap">
+                                  Auto-tag on Process
+                              </label>
+                          </div>
+                    </div>
+                    {originalPrompt === null ? (
+                      <button
+                        onClick={handleEnhancePrompt}
+                        disabled={isProcessing || isEnhancing || isTagging || !activePrompt.trim()}
+                        className="flex items-center px-3 py-1 text-sm font-semibold text-white bg-gradient-to-r from-brand-purple to-purple-700 rounded-md hover:from-purple-600 hover:to-purple-800 transition-all transform hover:scale-105 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed disabled:scale-100"
+                        title="Use AI to improve and expand your prompt"
+                      >
+                        <SparklesIcon className={`w-4 h-4 mr-2 ${isEnhancing ? 'animate-pulse' : ''}`} />
+                        {isEnhancing ? 'Enhancing...' : 'Enhance Prompt'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleRevertPrompt}
+                        disabled={isProcessing || isEnhancing}
+                        className="flex items-center px-3 py-1 text-sm font-semibold text-gray-200 bg-gray-600 rounded-md hover:bg-gray-500 transition-colors disabled:opacity-50"
+                        title="Revert to your original prompt"
+                      >
+                        <ReplaceIcon className="w-4 h-4 mr-2" />
+                        Revert
+                      </button>
+                    )}
+                </div>
               </div>
               <textarea
                 id="image-prompt"
@@ -193,7 +315,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
                   setActivePrompt(e.target.value);
                   if (originalPrompt !== null) {
                     setOriginalPrompt(null);
-                    setEnhanceError(null);
+                    setPromptHelperError(null);
                   }
                 }}
                 placeholder="e.g., make the background a surreal landscape"
@@ -201,8 +323,8 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
                 rows={4}
                 className="w-full p-3 text-base bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors disabled:opacity-50"
               />
-              {enhanceError && (
-                  <p className="text-red-400 text-xs mt-1 px-1">{enhanceError}</p>
+              {promptHelperError && (
+                  <p className="text-red-400 text-xs mt-1 px-1">{promptHelperError}</p>
               )}
             </div>
           </main>
