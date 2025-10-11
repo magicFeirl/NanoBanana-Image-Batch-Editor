@@ -1,0 +1,5 @@
+{
+  "name": "NanoBanana Image Batch Editor",
+  "description": "An application to batch upload and edit images using Google's NanoBanana (gemini-2.5-flash-image) model. It supports an image processing queue and maintains a history of editing prompts.",
+  "requestFramePermissions": []
+}
