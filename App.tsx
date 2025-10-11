@@ -1032,6 +1032,13 @@ const App: React.FC = () => {
     setImages(prevImages => prevImages.filter(img => img.id !== imageId));
   };
 
+  const handleMarkAsAutoTagged = (imageId: string) => {
+    setImages(prev => prev.map(img => 
+      img.id === imageId 
+      ? { ...img, hasBeenAutoTaggedInModal: true }
+      : img
+    ));
+  };
 
   const queuedCount = images.filter(img => img.status === ImageStatus.QUEUED).length;
   const processingCount = images.filter(img => img.status === ImageStatus.PROCESSING).length;
@@ -1484,67 +1491,65 @@ const App: React.FC = () => {
                     onClick={handleRetryFailed}
                     disabled={isProcessing}
                     className="flex items-center justify-center px-4 py-2 text-sm font-bold text-white bg-yellow-600 rounded-lg shadow-lg hover:bg-yellow-700 transition-all duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed"
-                     aria-label={`Retry ${failedCount} failed images`}
+                    title="Move all failed images back into the queue for another attempt"
+                    aria-label={`Retry ${failedCount} failed images`}
                   >
                     <RetryIcon className="w-5 h-5 mr-2" />
-                    {`Retry ${failedCount} Failed Image${failedCount !== 1 ? 's' : ''}`}
+                    {`Retry ${failedCount} Failed`}
                   </button>
                 )}
-                {completedCount > 0 && (
-                  <div className="flex items-center flex-wrap justify-end gap-2 p-2 rounded-lg bg-gray-800/50 border border-gray-700">
-                    <input
-                      type="text"
-                      value={zipFilename}
-                      onChange={(e) => setZipFilename(e.target.value)}
-                      className="bg-gray-900 border-2 border-gray-600 rounded-md py-1.5 px-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-40"
-                      placeholder="zip-filename"
-                      aria-label="Download filename"
-                    />
-                    <button
-                      onClick={handleDownloadAll}
-                      disabled={isZipping || isProcessing}
-                      className="relative flex items-center justify-center px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg shadow-lg hover:bg-indigo-700 transition-all duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed overflow-hidden"
-                      aria-label={`Download ${completedCount} edited images`}
-                    >
-                      {isZipping && (
-                        <div 
-                          className="absolute top-0 left-0 h-full bg-indigo-500/80 transition-all duration-200"
-                          style={{ width: `${zipProgress}%` }}
-                        ></div>
-                      )}
-                      <span className="relative z-10 flex items-center">
+                 {completedCount > 0 && (
+                   <div className="flex items-center gap-2">
+                      <input
+                          id="zip-filename"
+                          type="text"
+                          value={zipFilename}
+                          onChange={(e) => setZipFilename(e.target.value)}
+                          placeholder="zip-filename"
+                          className="px-2 py-1 text-sm bg-gray-900 border-2 border-gray-700 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 w-32"
+                      />
+                       <div className="flex items-center">
+                            <input
+                                type="checkbox"
+                                id="enable-compression"
+                                checked={enableCompression}
+                                onChange={(e) => setEnableCompression(e.target.checked)}
+                                className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-green-500 focus:ring-green-500"
+                            />
+                            <label htmlFor="enable-compression" className="ml-2 text-xs text-gray-400">Compress to PNG</label>
+                        </div>
+                      <button
+                        onClick={handleDownloadAll}
+                        disabled={isZipping || completedCount === 0}
+                        className="flex items-center justify-center px-4 py-2 text-sm font-bold text-white bg-green-600 rounded-lg shadow-lg hover:bg-green-700 transition-all duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed"
+                        title="Download all completed images as a ZIP file"
+                        aria-label={`Download ${completedCount} completed images`}
+                      >
                         <DownloadIcon className="w-5 h-5 mr-2" />
-                        {isZipping ? `Zipping... ${Math.round(zipProgress)}%` : `Download ${completedCount} Edited`}
-                      </span>
-                    </button>
-                     <div className="flex items-center w-full sm:w-auto mt-2 sm:mt-0 pt-2 sm:pt-0 sm:pl-2 border-t sm:border-t-0 sm:border-l border-gray-700">
-                        <input
-                            type="checkbox"
-                            id="enable-compression"
-                            checked={enableCompression}
-                            onChange={(e) => setEnableCompression(e.target.checked)}
-                            className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue"
-                        />
-                        <label htmlFor="enable-compression" className="ml-2 block text-sm text-gray-300 whitespace-nowrap">
-                            Lossless Compression (PNG)
-                        </label>
-                    </div>
-                  </div>
+                        {isZipping ? `Zipping... ${zipProgress.toFixed(0)}%` : `Download ${completedCount} Completed`}
+                      </button>
+                   </div>
                 )}
-                {images.length > 0 && (
-                  <button
+                 <button
                     onClick={handleClearAll}
-                    disabled={isProcessing}
+                    disabled={isProcessing || images.length === 0}
                     className="flex items-center justify-center px-4 py-2 text-sm font-bold text-white bg-red-600 rounded-lg shadow-lg hover:bg-red-700 transition-all duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed"
                     title="Remove all images from the application"
                     aria-label="Clear all images"
                   >
                     <TrashIcon className="w-5 h-5 mr-2" />
                     Clear All
-                  </button>
-                )}
+                </button>
               </div>
             </div>
+            <div className="flex flex-wrap gap-2 text-sm text-gray-400 mb-4">
+              <span><b>Total:</b> {images.length}</span>
+              <span className="text-yellow-400"><b>Queued:</b> {queuedCount}</span>
+              <span className="text-brand-blue"><b>Processing:</b> {processingCount}</span>
+              <span className="text-green-400"><b>Completed:</b> {completedCount}</span>
+              <span className="text-red-400"><b>Failed:</b> {failedCount}</span>
+            </div>
+
             <ImageList 
               images={images} 
               onEdit={handleOpenEditModal} 
@@ -1555,29 +1560,28 @@ const App: React.FC = () => {
             />
           </div>
         </main>
-        
-        {editingImage && (
-            <ImageEditModal
-                image={editingImage}
-                source={editSource}
-                onClose={handleCloseEditModal}
-                onProcess={handleProcessSingleImage}
-                onSavePrompt={handleSaveImagePrompt}
-                isProcessing={isSingleProcessing}
-                globalPrompt={currentPrompt}
-                error={singleProcessingError}
-                taggingSystemPrompt={taggingSystemPrompt}
-            />
-        )}
-
-        {lightboxImage && (
-            <Lightbox 
-                imageUrl={lightboxImage.url} 
-                altText={lightboxImage.alt} 
-                onClose={() => setLightboxImage(null)} 
-            />
-        )}
       </div>
+      {editingImage && (
+        <ImageEditModal
+          image={editingImage}
+          source={editSource}
+          onClose={handleCloseEditModal}
+          onProcess={handleProcessSingleImage}
+          onSavePrompt={handleSaveImagePrompt}
+          isProcessing={isSingleProcessing}
+          globalPrompt={currentPrompt}
+          error={singleProcessingError}
+          taggingSystemPrompt={taggingSystemPrompt}
+          onMarkAsAutoTagged={handleMarkAsAutoTagged}
+        />
+      )}
+      {lightboxImage && (
+        <Lightbox 
+            imageUrl={lightboxImage.url} 
+            altText={lightboxImage.alt}
+            onClose={() => setLightboxImage(null)}
+        />
+      )}
     </div>
   );
 };

@@ -22,4 +22,5 @@ export interface ImageFile {
   error?: string;
   retried?: boolean;
   history?: EditHistory[];
+  hasBeenAutoTaggedInModal?: boolean;
 }

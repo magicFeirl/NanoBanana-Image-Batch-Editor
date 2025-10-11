@@ -15,9 +15,10 @@ interface ImageEditModalProps {
   globalPrompt: string;
   error?: string | null;
   taggingSystemPrompt: string;
+  onMarkAsAutoTagged: (imageId: string) => void;
 }
 
-const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose, onProcess, onSavePrompt, isProcessing, globalPrompt, error, taggingSystemPrompt }) => {
+const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose, onProcess, onSavePrompt, isProcessing, globalPrompt, error, taggingSystemPrompt, onMarkAsAutoTagged }) => {
   const [activeImageUrl, setActiveImageUrl] = useState('');
   const [activePrompt, setActivePrompt] = useState('');
   const [activeTimestamp, setActiveTimestamp] = useState<number | null>(null);
@@ -40,6 +41,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
       setIsEnhancing(false);
       setIsTagging(false);
       setPromptHelperError(null);
+      setAutoTagBeforeSingleProcess(!image.hasBeenAutoTaggedInModal);
 
       if (sourceImageUrl === image.originalDataUrl) {
         setActiveTimestamp(0);
@@ -65,7 +67,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
             image.file.type,
             taggingSystemPrompt
         );
-
+        onMarkAsAutoTagged(image.id); // Mark as tagged on successful API call
         const cleanedTags = tags.replace(/\.$/, '').trim();
         const allTags = cleanedTags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
         const uniqueTags = [...new Set(allTags)].join(', ');
