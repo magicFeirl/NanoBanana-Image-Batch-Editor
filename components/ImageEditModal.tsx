@@ -227,7 +227,8 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
                 <button
                   key={item.timestamp}
                   onClick={() => handleHistoryClick(item)}
-                  className={`w-full text-left rounded-lg overflow-hidden border-2 transition-colors ${activeTimestamp === item.timestamp ? 'border-brand-blue' : 'border-transparent hover:border-gray-600'}`}
+                  disabled={isTagging}
+                  className={`w-full text-left rounded-lg overflow-hidden border-2 transition-colors ${activeTimestamp === item.timestamp ? 'border-brand-blue' : 'border-transparent hover:border-gray-600'} disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-transparent`}
                   title={item.prompt}
                 >
                   <img src={item.dataUrl} alt={`History from ${new Date(item.timestamp).toLocaleString()}`} className="w-full aspect-square object-cover bg-gray-900" />
@@ -252,7 +253,8 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
                         id="modal-prompt-select-editing"
                         value=""
                         onChange={handleSuggestionSelect}
-                        className="p-1.5 text-sm bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors"
+                        disabled={isProcessing || isTagging}
+                        className="p-1.5 text-sm bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors disabled:opacity-50"
                         aria-label="Select a preset editing prompt to append"
                     >
                         <option value="" disabled>Append Preset...</option>
@@ -300,7 +302,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
                     ) : (
                       <button
                         onClick={handleRevertPrompt}
-                        disabled={isProcessing || isEnhancing}
+                        disabled={isProcessing || isEnhancing || isTagging}
                         className="flex items-center px-3 py-1 text-sm font-semibold text-gray-200 bg-gray-600 rounded-md hover:bg-gray-500 transition-colors disabled:opacity-50"
                         title="Revert to your original prompt"
                       >
@@ -321,7 +323,7 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
                   }
                 }}
                 placeholder="e.g., make the background a surreal landscape"
-                disabled={isProcessing}
+                disabled={isProcessing || isTagging}
                 rows={4}
                 className="w-full p-3 text-base bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors disabled:opacity-50"
               />
@@ -358,14 +360,14 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
           </button>
           <button
             onClick={handleSave}
-            disabled={isProcessing}
+            disabled={isProcessing || isTagging}
             className="px-6 py-2 text-base font-semibold text-white bg-brand-purple rounded-md hover:bg-purple-700 transition-colors disabled:opacity-50"
           >
             Save Prompt & Close
           </button>
           <button
             onClick={handleProcess}
-            disabled={isProcessing || !activePrompt.trim()}
+            disabled={isProcessing || isTagging || !activePrompt.trim()}
             className="px-6 py-2 text-base font-semibold text-white bg-brand-blue rounded-md hover:bg-blue-500 transition-colors disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center"
           >
             <SparklesIcon className={`w-5 h-5 mr-2 ${isProcessing ? 'animate-pulse' : ''}`} />

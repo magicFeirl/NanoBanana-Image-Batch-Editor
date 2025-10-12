@@ -5,7 +5,7 @@ export interface PromptSuggestion {
 }
 
 export const promptSuggestionsEditing: PromptSuggestion[] = [
-  { label: "On Front", value: "solo, 1girl, from front, eye level, looking at viewer, facing viewer, straight-on, ", natural: ""},
+  { label: "On Front", value: "solo, 1girl, from front, eye level, looking at viewer, facing viewer, straight-on, standing, full body", natural: ""},
   { label: "Clear Background", value: "remove background, simple background, white background, subject only", natural: "Remove the background, leaving only the subject against a simple white background." },
   { label: "HD Upscale", value: "high resolution, 4k, masterpiece, best quality, ultra-detailed, sharp focus", natural: "Upscale the image to high resolution, making it ultra-detailed with sharp focus, like a masterpiece." },
   { label: "Front-facing Shot", value: "from front, looking at viewer, straight-on, portrait", natural: "Change the composition to a straight-on portrait, with the subject looking at the viewer." },
