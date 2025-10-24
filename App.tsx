@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import JSZip from 'jszip';
 import ImageUploader from './components/ImageUploader';
 import PromptInput from './components/PromptInput';
@@ -9,7 +9,7 @@ import Lightbox from './components/Lightbox';
 import { ImageFile, ImageStatus, EditHistory } from './types';
 import { editImage, RateLimitError, getTagsFromImage } from './services/geminiService';
 import { SparklesIcon, PlayIcon, DownloadIcon, RetryIcon, ClockIcon, ShuffleIcon, TrashIcon, XCircleIcon, RequeueIcon, TagIcon, ChevronDownIcon } from './components/Icons';
-import { promptSuggestions, promptSuggestionsCloseUp, promptSuggestionsPose, promptSuggestionsExpression, promptSuggestionsBodyParts, PromptSuggestion, promptSuggestionsFullBody, promptSuggestionsEditing, promptSuggestionsTextToVideo } from './prompts';
+import { promptSuggestions, promptSuggestionsAngelView2, promptSuggestionsCloseUp, promptSuggestionsPose, promptSuggestionsPose2, promptSuggestionsExpression, promptSuggestionsBodyParts, PromptSuggestion, promptSuggestionsFullBody, promptSuggestionsEditing, promptSuggestionsTextToVideo, promptSuggestionsPose3, promptSuggestionsAngelView3 } from './prompts';
 
 const safeLocalStorage = {
   getItem: (key: string): string | null => {
@@ -92,7 +92,7 @@ const compressImageToPNG = (dataUrl: string): Promise<string> => {
 
 const App: React.FC = () => {
   const [images, setImages] = useState<ImageFile[]>([]);
-  const [currentPrompt, setCurrentPrompt] = useState<string>('masterpiece, best quality, keep original art style, keep original character design, keep original features, keep original clothing, ');
+  const [currentPrompt, setCurrentPrompt] = useState<string>('masterpiece, best quality, keep original art style, keep original character design, keep original features, keep original clothing, remove background, simple background, white background, subject only, remove text ');
   const [promptHistory, setPromptHistory] = useState<string[]>(() => {
     try {
       const savedHistory = safeLocalStorage.getItem('promptHistory');
@@ -125,12 +125,16 @@ const App: React.FC = () => {
   const [combinePrompts, setCombinePrompts] = useState<boolean>(true);
   const [randomizeSources, setRandomizeSources] = useState({
     angle: false,
+    angle2: false,
+    angle3: true,
     closeup: false,
-    pose: true,
+    pose: false,
+    pose2: true,
     expression: true,
     bodyParts: false,
     fullBody: false,
-    textToVideo: false
+    textToVideo: false,
+    pose3: false,
   });
   const [totalInBatch, setTotalInBatch] = useState<number>(0);
   const [repeatCount, setRepeatCount] = useState<number>(1);
@@ -144,6 +148,37 @@ const App: React.FC = () => {
   const [lightboxImage, setLightboxImage] = useState<{ url: string; alt: string } | null>(null);
   const [enableCompression, setEnableCompression] = useState<boolean>(false);
   const [useNaturalLanguage, setUseNaturalLanguage] = useState<boolean>(false);
+  const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [concurrency, setConcurrency] = useState<number>(4);
+  const isProcessingRef = useRef(isProcessing);
+  isProcessingRef.current = isProcessing;
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Effect to play silent audio during processing to keep the tab active.
+  // This prevents the browser from throttling JavaScript in inactive tabs.
+  useEffect(() => {
+    if (!audioRef.current) {
+      const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+      audioRef.current = new Audio(silentWav);
+      audioRef.current.loop = true;
+      audioRef.current.muted = true;
+    }
+
+    if (isProcessing) {
+      const playPromise = audioRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          console.warn(
+            "Silent audio playback failed. Background processing may be throttled if the tab is inactive. " +
+            "This is usually due to browser autoplay policies that require user interaction first.",
+            error
+          );
+        });
+      }
+    } else {
+      audioRef.current.pause();
+    }
+  }, [isProcessing]);
 
   const getCounterStyles = (count: number): { containerClasses: string; numberClasses: string } => {
     let containerClasses = "mt-4 text-sm font-medium tracking-wide transition-all duration-300 inline-block";
@@ -205,6 +240,23 @@ const App: React.FC = () => {
       console.error("Failed to save pinned prompts to localStorage", error);
     }
   }, [pinnedPrompts]);
+  
+  useEffect(() => {
+    let timer: number | undefined;
+    if (isProcessing) {
+      // FIX: Use window.setInterval to ensure the browser's implementation is used, which returns a number.
+      // This resolves the TypeScript error where Node.js's Timeout type is inferred instead.
+      timer = window.setInterval(() => {
+        setElapsedTime(prev => prev + 1);
+      }, 1000);
+    }
+    return () => {
+      if (timer) {
+        window.clearInterval(timer);
+      }
+    };
+  }, [isProcessing]);
+
 
   useEffect(() => {
     if (!isProcessing) {
@@ -284,6 +336,8 @@ const App: React.FC = () => {
         alert('No images in queue to process.');
         return;
     }
+    
+    setElapsedTime(0);
 
     if (autoTagBeforeProcessing) {
         setStatusMessage('Auto-tagging queued images...');
@@ -325,12 +379,16 @@ const App: React.FC = () => {
     
     const activeSources: { name: keyof typeof randomizeSources, prompts: PromptSuggestion[] }[] = [];
     if (randomizeSources.angle) activeSources.push({ name: 'angle', prompts: promptSuggestions });
+    if (randomizeSources.angle2) activeSources.push({ name: 'angle2', prompts: promptSuggestionsAngelView2 });
+    if (randomizeSources.angle3) activeSources.push({ name: 'angle3', prompts: promptSuggestionsAngelView3 });
     if (randomizeSources.closeup) activeSources.push({ name: 'closeup', prompts: promptSuggestionsCloseUp });
     if (randomizeSources.pose) activeSources.push({ name: 'pose', prompts: promptSuggestionsPose });
+    if (randomizeSources.pose2) activeSources.push({ name: 'pose2', prompts: promptSuggestionsPose2 });
     if (randomizeSources.expression) activeSources.push({ name: 'expression', prompts: promptSuggestionsExpression });
     if (randomizeSources.bodyParts) activeSources.push({ name: 'bodyParts', prompts: promptSuggestionsBodyParts });
     if (randomizeSources.fullBody) activeSources.push({ name: 'fullBody', prompts: promptSuggestionsFullBody });
     if (randomizeSources.textToVideo) activeSources.push({ name: 'textToVideo', prompts: promptSuggestionsTextToVideo });
+    if (randomizeSources.pose3) activeSources.push({ name: 'pose3', prompts: promptSuggestionsPose3 });
 
     if (shouldRandomizeOnProcess) {
         if (repeatCount > 1) {
@@ -465,31 +523,37 @@ const App: React.FC = () => {
     if (!isProcessing || isCoolingDown) {
       return;
     }
-    
-    if (images.some(img => img.status === ImageStatus.PROCESSING)) {
-      return;
+
+    const currentlyProcessingCount = images.filter(img => img.status === ImageStatus.PROCESSING).length;
+
+    if (currentlyProcessingCount >= concurrency) {
+      return; // All slots are full, wait for one to finish.
     }
 
-    const nextImage = images.find((img) => img.status === ImageStatus.QUEUED);
+    const availableSlots = concurrency - currentlyProcessingCount;
+    const imagesToStart = images.filter(img => img.status === ImageStatus.QUEUED).slice(0, availableSlots);
 
-    if (!nextImage) {
-      const imagesToAutoRetry = images.filter(img => img.status === ImageStatus.ERROR && !img.retried);
-      
-      if (imagesToAutoRetry.length > 0) {
-        setStatusMessage(`Batch complete. Automatically retrying ${imagesToAutoRetry.length} failed image(s)...`);
+    if (imagesToStart.length === 0) {
+      // If no images are queued and nothing is processing, check for retries or finish the batch.
+      if (currentlyProcessingCount === 0) {
+        const imagesToAutoRetry = images.filter(img => img.status === ImageStatus.ERROR && !img.retried);
         
-        setImages(prevImages => 
-          prevImages.map(img => {
-            if (imagesToAutoRetry.some(retryImg => retryImg.id === img.id)) {
-              return { ...img, status: ImageStatus.QUEUED, error: undefined, retried: true };
-            }
-            return img;
-          })
-        );
-      } else {
-        setIsProcessing(false);
-        if (statusMessage.includes('Automatically retrying')) {
-          setStatusMessage('');
+        if (imagesToAutoRetry.length > 0) {
+          setStatusMessage(`Batch complete. Automatically retrying ${imagesToAutoRetry.length} failed image(s)...`);
+          
+          setImages(prevImages => 
+            prevImages.map(img => {
+              if (imagesToAutoRetry.some(retryImg => retryImg.id === img.id)) {
+                return { ...img, status: ImageStatus.QUEUED, error: undefined, retried: true };
+              }
+              return img;
+            })
+          );
+        } else {
+          setIsProcessing(false);
+          if (statusMessage.includes('Automatically retrying')) {
+            setStatusMessage('');
+          }
         }
       }
       return;
@@ -502,74 +566,77 @@ const App: React.FC = () => {
     const hasProcessedImages = images.some(i => i.status === ImageStatus.COMPLETED || i.status === ImageStatus.ERROR);
     const delay = hasProcessedImages ? throttleDelay * 1000 : 0;
 
-    const timerId = setTimeout(async () => {
-      const imagePrompt = nextImage.prompt || '';
+    // Fire off processing for all available slots
+    imagesToStart.forEach(imageToProcess => {
+        setTimeout(async () => {
+          if (!isProcessingRef.current) return; // Stop if processing was cancelled
 
-      setImages((prev) =>
-        prev.map((img) =>
-          img.id === nextImage.id
-            ? { ...img, status: ImageStatus.PROCESSING, prompt: imagePrompt, error: undefined }
-            : img
-        )
-      );
-
-      try {
-        const base64Data = nextImage.originalDataUrl.split(',')[1];
-        if (!base64Data) throw new Error('Invalid image data URL.');
-
-        const editedData = await editImage(
-          base64Data,
-          nextImage.file.type,
-          imagePrompt
-        );
-
-        setImages((prev) =>
-          prev.map((img) =>
-            img.id === nextImage.id
-              ? {
-                  ...img,
-                  status: ImageStatus.COMPLETED,
-                  editedDataUrl: `data:${nextImage.file.type};base64,${editedData}`,
-                }
-              : img
-          )
-        );
-        incrementProcessedTodayCount();
-      } catch (error) {
-        console.error('Error processing image:', error);
-
-        if (error instanceof RateLimitError) {
-          setStatusMessage('API rate limit hit. Pausing queue for 15 seconds...');
-          setIsCoolingDown(true);
-          setImages(prev => prev.map(img => 
-              img.id === nextImage.id 
-              ? { ...img, status: ImageStatus.QUEUED, error: 'Rate limited. Will retry.' } 
-              : img
-            )
-          );
-          setTimeout(() => {
-            setStatusMessage('');
-            setIsCoolingDown(false);
-          }, 15000);
-        } else {
+          const imagePrompt = imageToProcess.prompt || '';
+    
           setImages((prev) =>
             prev.map((img) =>
-              img.id === nextImage.id
-                ? {
-                    ...img,
-                    status: ImageStatus.ERROR,
-                    error: error instanceof Error ? error.message : String(error),
-                  }
+              img.id === imageToProcess.id
+                ? { ...img, status: ImageStatus.PROCESSING, prompt: imagePrompt, error: undefined }
                 : img
             )
           );
-        }
-      }
-    }, delay);
-
-    return () => clearTimeout(timerId);
     
-  }, [isProcessing, images, currentPrompt, throttleDelay, isCoolingDown, statusMessage, incrementProcessedTodayCount]);
+          try {
+            const base64Data = imageToProcess.originalDataUrl.split(',')[1];
+            if (!base64Data) throw new Error('Invalid image data URL.');
+    
+            const editedData = await editImage(
+              base64Data,
+              imageToProcess.file.type,
+              imagePrompt
+            );
+    
+            setImages((prev) =>
+              prev.map((img) =>
+                img.id === imageToProcess.id
+                  ? {
+                      ...img,
+                      status: ImageStatus.COMPLETED,
+                      editedDataUrl: `data:${imageToProcess.file.type};base64,${editedData}`,
+                    }
+                  : img
+              )
+            );
+            incrementProcessedTodayCount();
+          } catch (error) {
+            console.error('Error processing image:', error);
+    
+            if (error instanceof RateLimitError) {
+              setStatusMessage('API rate limit hit. Pausing queue for 15 seconds...');
+              setIsCoolingDown(true);
+              setImages(prev => prev.map(img => 
+                  img.id === imageToProcess.id 
+                  ? { ...img, status: ImageStatus.QUEUED, error: 'Rate limited. Will retry.' } 
+                  : img
+                )
+              );
+              setTimeout(() => {
+                setStatusMessage('');
+                setIsCoolingDown(false);
+              }, 15000);
+            } else {
+              setImages((prev) =>
+                prev.map((img) =>
+                  img.id === imageToProcess.id
+                    ? {
+                        ...img,
+                        status: ImageStatus.ERROR,
+                        error: error instanceof Error ? error.message : String(error),
+                      }
+                    : img
+                )
+              );
+            }
+          }
+        }, delay);
+    });
+    
+  }, [isProcessing, images, concurrency, throttleDelay, isCoolingDown, statusMessage, incrementProcessedTodayCount]);
   
   const handleDownloadAll = async () => {
     const completedImages = images.filter(
@@ -686,6 +753,7 @@ const App: React.FC = () => {
 
     setTotalInBatch(failedToRetry.length);
     setStatusMessage('');
+    setElapsedTime(0);
 
     setImages(prevImages => 
         prevImages.map(img => 
@@ -862,6 +930,7 @@ const App: React.FC = () => {
   const handleClearAll = () => {
     if (images.length === 0 || isProcessing) return;
     setImages([]);
+    setElapsedTime(0);
   };
 
   const handleClearQueue = () => {
@@ -875,9 +944,9 @@ const App: React.FC = () => {
     if (!selectedValue) return;
 
     const allSuggestions = [
-        ...promptSuggestionsEditing, ...promptSuggestions, ...promptSuggestionsCloseUp,
-        ...promptSuggestionsPose, ...promptSuggestionsExpression, ...promptSuggestionsBodyParts,
-        ...promptSuggestionsFullBody, ...promptSuggestionsTextToVideo
+        ...promptSuggestionsEditing, ...promptSuggestions, ...promptSuggestionsAngelView2, ...promptSuggestionsAngelView3, ...promptSuggestionsCloseUp,
+        ...promptSuggestionsPose, ...promptSuggestionsPose2, ...promptSuggestionsExpression, ...promptSuggestionsBodyParts,
+        ...promptSuggestionsFullBody, ...promptSuggestionsTextToVideo, ...promptSuggestionsPose3
     ];
     const selectedSuggestion = allSuggestions.find(p => p.value === selectedValue);
 
@@ -910,12 +979,16 @@ const App: React.FC = () => {
     
     const activeSources: PromptSuggestion[][] = [];
     if (randomizeSources.angle) activeSources.push(promptSuggestions);
+    if (randomizeSources.angle2) activeSources.push(promptSuggestionsAngelView2);
+    if (randomizeSources.angle3) activeSources.push(promptSuggestionsAngelView3);
     if (randomizeSources.closeup) activeSources.push(promptSuggestionsCloseUp);
     if (randomizeSources.pose) activeSources.push(promptSuggestionsPose);
+    if (randomizeSources.pose2) activeSources.push(promptSuggestionsPose2);
     if (randomizeSources.expression) activeSources.push(promptSuggestionsExpression);
     if (randomizeSources.bodyParts) activeSources.push(promptSuggestionsBodyParts);
     if (randomizeSources.fullBody) activeSources.push(promptSuggestionsFullBody);
     if (randomizeSources.textToVideo) activeSources.push(promptSuggestionsTextToVideo);
+    if (randomizeSources.pose3) activeSources.push(promptSuggestionsPose3);
 
     if (activeSources.length === 0) {
       alert("Please select at least one suggestion category to randomize from.");
@@ -1012,7 +1085,7 @@ const App: React.FC = () => {
     const selectedPreset = taggingPresets.find(p => p.key === selectedKey);
     if (selectedPreset) {
         setTaggingSystemPrompt(selectedPreset.prompt);
-        setTaggingPresetKey(selectedKey);
+        setTaggingPresetKey(selectedPreset.key);
     }
   };
 
@@ -1038,6 +1111,12 @@ const App: React.FC = () => {
       ? { ...img, hasBeenAutoTaggedInModal: true }
       : img
     ));
+  };
+  
+  const formatTime = (totalSeconds: number) => {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
   const queuedCount = images.filter(img => img.status === ImageStatus.QUEUED).length;
@@ -1114,6 +1193,44 @@ const App: React.FC = () => {
                     </select>
                   </div>
                   <div>
+                    <label htmlFor="prompt-select-angle2" className="block text-sm font-medium text-gray-300 mb-2">
+                        Angle/View Suggestions 2
+                    </label>
+                    <select
+                        id="prompt-select-angle2"
+                        value=""
+                        onChange={handleSuggestionSelect}
+                        className="w-full p-3 text-base bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors"
+                        aria-label="Select a preset angle or view prompt from list 2"
+                    >
+                        <option value="" disabled>-- Select a preset --</option>
+                        {promptSuggestionsAngelView2.map((p) => (
+                            <option key={p.label} value={p.value}>
+                                {p.label}
+                            </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="prompt-select-angle3" className="block text-sm font-medium text-gray-300 mb-2">
+                        Angle/View Suggestions 3
+                    </label>
+                    <select
+                        id="prompt-select-angle3"
+                        value=""
+                        onChange={handleSuggestionSelect}
+                        className="w-full p-3 text-base bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors"
+                        aria-label="Select a preset angle or view prompt from list 3"
+                    >
+                        <option value="" disabled>-- Select a preset --</option>
+                        {promptSuggestionsAngelView3.map((p) => (
+                            <option key={p.label} value={p.value}>
+                                {p.label}
+                            </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
                     <label htmlFor="prompt-select-closeup" className="block text-sm font-medium text-gray-300 mb-2">
                         Close-up Suggestions
                     </label>
@@ -1145,6 +1262,44 @@ const App: React.FC = () => {
                     >
                         <option value="" disabled>-- Select a preset --</option>
                         {promptSuggestionsPose.map((p) => (
+                            <option key={p.label} value={p.value}>
+                                {p.label}
+                            </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="prompt-select-pose2" className="block text-sm font-medium text-gray-300 mb-2">
+                        Pose Suggestions 2
+                    </label>
+                    <select
+                        id="prompt-select-pose2"
+                        value=""
+                        onChange={handleSuggestionSelect}
+                        className="w-full p-3 text-base bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors"
+                        aria-label="Select a preset pose prompt from list 2"
+                    >
+                        <option value="" disabled>-- Select a preset --</option>
+                        {promptSuggestionsPose2.map((p) => (
+                            <option key={p.label} value={p.value}>
+                                {p.label}
+                            </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="prompt-select-pose3" className="block text-sm font-medium text-gray-300 mb-2">
+                        Pose Suggestions 3
+                    </label>
+                    <select
+                        id="prompt-select-pose3"
+                        value=""
+                        onChange={handleSuggestionSelect}
+                        className="w-full p-3 text-base bg-gray-900 border-2 border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-colors"
+                        aria-label="Select a preset pose prompt from list 3"
+                    >
+                        <option value="" disabled>-- Select a preset --</option>
+                        {promptSuggestionsPose3.map((p) => (
                             <option key={p.label} value={p.value}>
                                 {p.label}
                             </option>
@@ -1322,10 +1477,18 @@ const App: React.FC = () => {
               <label className="text-xl font-semibold text-gray-200 mb-0 block">3. Configure & Start Queue</label>
                <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 space-y-4">
                  <p className="text-sm font-medium text-gray-300">Randomize Prompts for Queued Images</p>
-                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4 items-center">
+                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-4 items-center">
                     <div className="flex items-center">
                       <input type="checkbox" id="rand-angle" checked={randomizeSources.angle} onChange={() => handleRandomizeSourceChange('angle')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
                       <label htmlFor="rand-angle" className="ml-2 block text-sm text-gray-300">Angle/View</label>
+                    </div>
+                    <div className="flex items-center">
+                      <input type="checkbox" id="rand-angle2" checked={randomizeSources.angle2} onChange={() => handleRandomizeSourceChange('angle2')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
+                      <label htmlFor="rand-angle2" className="ml-2 block text-sm text-gray-300">Angle/View 2</label>
+                    </div>
+                     <div className="flex items-center">
+                      <input type="checkbox" id="rand-angle3" checked={randomizeSources.angle3} onChange={() => handleRandomizeSourceChange('angle3')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
+                      <label htmlFor="rand-angle3" className="ml-2 block text-sm text-gray-300">Angle/View 3</label>
                     </div>
                     <div className="flex items-center">
                       <input type="checkbox" id="rand-closeup" checked={randomizeSources.closeup} onChange={() => handleRandomizeSourceChange('closeup')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
@@ -1336,6 +1499,14 @@ const App: React.FC = () => {
                       <label htmlFor="rand-pose" className="ml-2 block text-sm text-gray-300">Pose</label>
                     </div>
                     <div className="flex items-center">
+                      <input type="checkbox" id="rand-pose2" checked={randomizeSources.pose2} onChange={() => handleRandomizeSourceChange('pose2')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
+                      <label htmlFor="rand-pose2" className="ml-2 block text-sm text-gray-300">Pose 2</label>
+                    </div>
+                    <div className="flex items-center">
+                      <input type="checkbox" id="rand-pose3" checked={randomizeSources.pose3} onChange={() => handleRandomizeSourceChange('pose3')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
+                      <label htmlFor="rand-pose3" className="ml-2 block text-sm text-gray-300">Pose 3</label>
+                    </div>
+                     <div className="flex items-center">
                       <input type="checkbox" id="rand-expression" checked={randomizeSources.expression} onChange={() => handleRandomizeSourceChange('expression')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
                       <label htmlFor="rand-expression" className="ml-2 block text-sm text-gray-300">Expression</label>
                     </div>
@@ -1348,16 +1519,16 @@ const App: React.FC = () => {
                       <label htmlFor="rand-fullbody" className="ml-2 block text-sm text-gray-300">Full Body</label>
                     </div>
                     <div className="flex items-center">
-                      <input type="checkbox" id="rand-fullbody" checked={randomizeSources.textToVideo} onChange={() => handleRandomizeSourceChange('textToVideo')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
-                      <label htmlFor="rand-fullbody" className="ml-2 block text-sm text-gray-300">Text To Video</label>
+                      <input type="checkbox" id="rand-t2v" checked={randomizeSources.textToVideo} onChange={() => handleRandomizeSourceChange('textToVideo')} className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-brand-blue focus:ring-brand-blue" />
+                      <label htmlFor="rand-t2v" className="ml-2 block text-sm text-gray-300">Text To Video</label>
                     </div>
                     <button
                       onClick={handleRandomizePrompts}
                       disabled={isProcessing || queuedCount === 0 || !canRandomize}
-                      className="flex items-center justify-center p-2 text-sm font-bold text-white bg-brand-purple rounded-lg shadow-lg hover:bg-purple-700 transition-all duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed"
+                      className="flex items-center justify-center p-2 text-sm font-bold text-white bg-brand-purple rounded-lg shadow-lg hover:bg-purple-700 transition-all duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed sm:col-span-2 lg:col-span-4"
                     >
                       <ShuffleIcon className="w-5 h-5 mr-2"/>
-                      Apply
+                      Apply Random Prompts to Queue
                     </button>
                  </div>
                  {repeatCount > 1 && canRandomize && (
@@ -1389,72 +1560,86 @@ const App: React.FC = () => {
                       Auto-tag Queued Images First
                     </label>
                   </div>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
-                 <div className="sm:col-span-1">
-                    <label htmlFor="repeat-count" className="text-sm font-medium text-gray-300 mb-2 block">Edits per Image</label>
-                    <input
-                        id="repeat-count"
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
+                    <div className="md:col-span-1">
+                      <label htmlFor="concurrency-level" className="text-sm font-medium text-gray-300 mb-2 block">Concurrency</label>
+                      <input
+                          id="concurrency-level"
+                          type="number"
+                          value={concurrency}
+                          onChange={(e) => setConcurrency(Math.max(1, Math.min(10, Number(e.target.value))))}
+                          min="1"
+                          max="10"
+                          disabled={isProcessing}
+                          className="w-full p-4 bg-gray-900 border-2 border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-blue disabled:opacity-50 text-center h-[64px] text-lg"
+                          aria-label="Number of concurrent image processing jobs"
+                      />
+                    </div>
+                    <div className="md:col-span-1">
+                        <label htmlFor="repeat-count" className="text-sm font-medium text-gray-300 mb-2 block">Edits per Image</label>
+                        <input
+                            id="repeat-count"
+                            type="number"
+                            value={repeatCount}
+                            onChange={(e) => {
+                              const newCount = Math.max(1, Number(e.target.value));
+                              if (repeatCount === 1 && newCount > 1) {
+                                setRandomizeForEachEdit(true);
+                              }
+                              setRepeatCount(newCount);
+                            }}
+                            min="1"
+                            disabled={isProcessing}
+                            className="w-full p-4 bg-gray-900 border-2 border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-blue disabled:opacity-50 text-center h-[64px] text-lg"
+                            aria-label="Number of edits to perform for each image in the queue"
+                        />
+                    </div>
+                    <div className="md:col-span-1">
+                      <label htmlFor="throttle-delay" className="text-sm font-medium text-gray-300 mb-2 block">Request Delay (sec)</label>
+                      <input
+                        id="throttle-delay"
                         type="number"
-                        value={repeatCount}
-                        onChange={(e) => {
-                           const newCount = Math.max(1, Number(e.target.value));
-                           if (repeatCount === 1 && newCount > 1) {
-                             setRandomizeForEachEdit(true);
-                           }
-                           setRepeatCount(newCount);
-                        }}
-                        min="1"
+                        value={throttleDelay}
+                        onChange={(e) => setThrottleDelay(Math.max(0, Number(e.target.value)))}
+                        min="0"
+                        step="0.5"
                         disabled={isProcessing}
                         className="w-full p-4 bg-gray-900 border-2 border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-blue disabled:opacity-50 text-center h-[64px] text-lg"
-                        aria-label="Number of edits to perform for each image in the queue"
-                    />
-                 </div>
-                 <div className="sm:col-span-1">
-                  <label htmlFor="throttle-delay" className="text-sm font-medium text-gray-300 mb-2 block">Request Delay (sec)</label>
-                  <input
-                    id="throttle-delay"
-                    type="number"
-                    value={throttleDelay}
-                    onChange={(e) => setThrottleDelay(Math.max(0, Number(e.target.value)))}
-                    min="0"
-                    step="0.5"
-                    disabled={isProcessing}
-                    className="w-full p-4 bg-gray-900 border-2 border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-blue disabled:opacity-50 text-center h-[64px] text-lg"
-                    aria-label="Delay between requests in seconds"
-                  />
-                </div>
-                <div className="sm:col-span-2 space-y-2">
-                   {statusMessage && (
-                    <div className="flex items-center justify-center text-center p-2 rounded-lg bg-yellow-900/50 text-yellow-300 text-sm">
-                      <ClockIcon className="w-5 h-5 mr-2 animate-spin"/>
-                      {statusMessage}
+                        aria-label="Delay between requests in seconds"
+                      />
                     </div>
-                  )}
-                  {isProcessing ? (
-                    <button
-                      onClick={handleCancelProcessing}
-                      className="w-full flex items-center justify-center p-4 text-lg font-bold text-white bg-gradient-to-r from-red-500 to-orange-500 rounded-lg shadow-lg hover:from-red-600 hover:to-orange-600 transition-all duration-300 transform hover:scale-105"
-                      style={{minHeight: '64px'}}
-                      aria-label="Cancel current processing batch"
-                    >
-                      <XCircleIcon className="w-6 h-6 mr-2" />
-                      {`Processing... (${processedInBatch}/${totalInBatch})`}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={startProcessing}
-                      disabled={queuedCount === 0}
-                      className="w-full flex items-center justify-center p-4 text-lg font-bold text-white bg-gradient-to-r from-green-500 to-teal-500 rounded-lg shadow-lg hover:from-green-600 hover:to-teal-600 transition-all duration-300 transform hover:scale-105 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed disabled:scale-100"
-                      style={{minHeight: '64px'}}
-                      aria-label={`Process ${queuedCount} queued images`}
-                    >
-                      <PlayIcon className="w-6 h-6 mr-2" />
-                      {`Process ${queuedCount} Queued Image${queuedCount !== 1 ? 's' : ''}`}
-                    </button>
-                  )}
+                    <div className="md:col-span-1 space-y-2">
+                      {statusMessage && (
+                        <div className="flex items-center justify-center text-center p-2 rounded-lg bg-yellow-900/50 text-yellow-300 text-sm">
+                          <ClockIcon className="w-5 h-5 mr-2 animate-spin"/>
+                          {statusMessage}
+                        </div>
+                      )}
+                      {isProcessing ? (
+                        <button
+                          onClick={handleCancelProcessing}
+                          className="w-full flex items-center justify-center p-4 text-lg font-bold text-white bg-gradient-to-r from-red-500 to-orange-500 rounded-lg shadow-lg hover:from-red-600 hover:to-orange-600 transition-all duration-300 transform hover:scale-105"
+                          style={{minHeight: '64px'}}
+                          aria-label="Cancel current processing batch"
+                        >
+                          <XCircleIcon className="w-6 h-6 mr-2" />
+                          {`Cancel (${processedInBatch}/${totalInBatch})`}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={startProcessing}
+                          disabled={queuedCount === 0}
+                          className="w-full flex items-center justify-center p-4 text-lg font-bold text-white bg-gradient-to-r from-green-500 to-teal-500 rounded-lg shadow-lg hover:from-green-600 hover:to-teal-600 transition-all duration-300 transform hover:scale-105 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed disabled:scale-100"
+                          style={{minHeight: '64px'}}
+                          aria-label={`Process ${queuedCount} queued images`}
+                        >
+                          <PlayIcon className="w-6 h-6 mr-2" />
+                          {`Process ${queuedCount} Queued`}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              </div>
             </div>
           </div>
           
@@ -1542,12 +1727,24 @@ const App: React.FC = () => {
                 </button>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 text-sm text-gray-400 mb-4">
+            <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-400 mb-4">
               <span><b>Total:</b> {images.length}</span>
               <span className="text-yellow-400"><b>Queued:</b> {queuedCount}</span>
               <span className="text-brand-blue"><b>Processing:</b> {processingCount}</span>
               <span className="text-green-400"><b>Completed:</b> {completedCount}</span>
               <span className="text-red-400"><b>Failed:</b> {failedCount}</span>
+              {(isProcessing || elapsedTime > 0) && (
+                <span className="flex items-center text-gray-300">
+                  <ClockIcon className="w-4 h-4 mr-1.5" />
+                  <b>Time:</b><span className="ml-1 font-mono">{formatTime(elapsedTime)}</span>
+                </span>
+              )}
+               {(isProcessing || elapsedTime > 0) && processedInBatch > 0 && (
+                <span className="flex items-center text-gray-300" title="Average seconds per image for this batch">
+                  <ClockIcon className="w-4 h-4 mr-1.5" />
+                  <b>Sec/Img:</b><span className="ml-1 font-mono">{(elapsedTime / processedInBatch).toFixed(1)}s</span>
+                </span>
+              )}
             </div>
 
             <ImageList 

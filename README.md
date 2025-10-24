@@ -1,20 +1,71 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# NanoBanana 批量图片编辑器
 
-# Run and deploy your AI Studio app
+NanoBanana 批量图片编辑器是一个强大的前端 Web 应用，旨在利用 Google 先进的 Gemini AI 模型（特指 `gemini-2.5-flash-image`，代号 "NanoBanana"）实现对图片的批量处理和创意编辑。无论您是需要统一修改大量图片素材的设计师，还是希望为单个角色设计探索不同风格的艺术家，本工具都能为您提供高效、智能的解决方案。
 
-This contains everything you need to run your app locally.
+## 核心功能 (Core Features)
 
-View your app in AI Studio: https://ai.studio/apps/drive/1gnpX07IQW6GnCv6lOFFNwpdx4dwWxirO
+- ✨ **AI 驱动的批量编辑**：一次性上传多张图片（支持 PNG, JPG, WEBP），并使用统一或独立的文本指令进行智能编辑。
+- 🚀 **高性能处理队列**：通过可配置的并发数（最多 10 个任务并行）和请求延迟，高效处理大量图片，同时有效规避 API 速率限制。
+- 🧠 **高级提示词系统**：
+  - **提示词库**：内置大量精心设计的预设提示词，涵盖画面风格、构图角度、人物姿势、表情等多个类别，一键追加。
+  - **历史与收藏**：自动保存最近使用的提示词，并支持将常用提示词“钉”在列表顶部，方便随时调用。
+  - **智能随机化**：勾选您感兴趣的提示词类别，应用可以为队列中的每张图片自动组合生成随机、富有创意的指令。
+  - **AI 提示词增强**：利用 AI 优化您的基本想法，生成更专业、更符合 Danbooru 风格的高质量标签化提示词。
+- 🤖 **自动图像标签**：在开始编辑前，可选择使用 Gemini 模型自动为图片生成描述性标签。此功能支持多种预设指令（如仅描述角色特征、忽略背景等），也可自定义，生成的标签可以直接用作编辑提示词的一部分。
+- 🔄 **多版本生成与迭代**：
+  - **单图多编辑**：为单张原始图片设置生成多个版本，结合随机化提示词功能，轻松探索不同创意方向。
+  - **反馈循环**：一键将已编辑完成的图片重新作为原始素材加入处理队列，进行下一轮迭代编辑。
+- 🖼️ **精细化图片管理**：
+  - **卡片式视图**：每张图片均以“原始 vs. 编辑后”的卡片形式清晰展示，处理状态（排队中、处理中、已完成、失败）一目了然。
+  - **独立编辑模态框**：进入专门的模态框对单张图片进行精细编辑、查看历史版本、并利用 AI 工具辅助生成提示词。
+  - **灵活的下载选项**：支持一键打包下载所有已完成的图片为 ZIP 文件，也支持单独下载任意一张原始或编辑后的图片。
+- ⚙️ **用户体验优化**：
+  - **状态追踪**：实时显示队列统计、处理计时器、平均每图耗时以及当日处理总数。
+  - **错误处理**：自动重试因 API 速率限制而失败的任务，并允许手动一键重试所有失败的图片。
+  - **图片预览**：支持点击任意图片进行全屏灯箱预览。
 
-## Run Locally
+## 使用示例 (Usage Examples)
 
-**Prerequisites:**  Node.js
+#### 示例一：为电商产品图批量去除背景
 
+**场景**：您有一批产品照片，背景杂乱，需要将它们全部处理成简洁的白底图。
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+**操作步骤**：
+1.  **上传图片**：点击上传区域，选择所有需要处理的产品照片。
+2.  **输入核心指令**：在主提示词输入框中，输入用于背景移除的指令，例如：
+    ```text
+    remove background, simple background, white background, subject only, remove text, high quality
+    ```
+3.  **配置并开始**：根据需要，可以适当调高“Concurrency”（并发数）（例如设置为 5）以加快处理速度。点击“Process X Queued”按钮启动队列。
+4.  **下载成果**：等待所有图片处理完成（状态变为绿色“Completed”）。在下载区域输入一个 ZIP 文件名（如 `product-white-bg`），然后点击“Download X Completed”按钮，即可将所有白底图打包下载。
+
+---
+
+#### 示例二：为单个角色图探索多种姿势与构图
+
+**场景**：您是一位游戏原画师，完成了一张角色的标准站姿设计图。现在，您想快速生成该角色在不同姿势和镜头下的多种视觉参考。
+
+**操作步骤**：
+1.  **上传角色图**：上传您的角色设计图。
+2.  **设置生成数量**：在“Edits per Image”（每图编辑次数）输入框中，填入您想要生成的变体数量，例如 `12`。
+3.  **输入基础指令**：在主提示词输入框中，输入保持角色核心设计的指令，例如：
+    ```text
+    masterpiece, best quality, keep original character design, keep original features, 1girl, solo
+    ```
+4.  **选择随机化类别**：在“Configure & Start Queue”区域，找到“Randomize Prompts”部分。勾选几个您感兴趣的类别，例如 "Pose Suggestions 2"、"Pose Suggestions 3" 和 "Angle/View Suggestions 3"。
+5.  **启用逐个随机**：确保 "Randomize prompt for each edit" 复选框已被勾选。这将确保生成的 12 个版本每一个都使用不同的随机指令。
+6.  **开始处理**：点击“Process 1 Queued”按钮。应用会自动将您的原始图片复制 12 次，并为每一次副本附加一组从您所选类别中随机抽取的提示词，然后开始处理。
+7.  **查看结果**：处理完成后，您将得到 12 张保持了原角色设计，但拥有不同姿势和镜头角度的全新参考图。
+
+## 技术栈 (Technology Stack)
+
+- **前端框架**: React
+- **语言**: TypeScript
+- **样式**: Tailwind CSS
+- **AI 模型**: Google Gemini API (@google/genai)
+- **打包工具**: JSZip
+
+## 如何运行 (How to Run)
+
+1.  **配置 API 密钥**: 确保您的运行环境中已设置 `process.env.API_KEY`，并填入您的有效 Google Gemini API 密钥。
+2.  **打开应用**: 在现代浏览器中直接打开 `index.html` 文件即可运行此应用。

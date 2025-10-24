@@ -29,26 +29,38 @@ export const editImage = async (
   mimeType: string,
   prompt: string
 ): Promise<string> => {
+  let timeoutId: number | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    // FIX: Use window.setTimeout to ensure the browser's implementation is used, which returns a number, resolving the type conflict with NodeJS.Timeout.
+    timeoutId = window.setTimeout(() => {
+      reject(new Error("Request timed out after 60 seconds"));
+    }, 60000);
+  });
+
+  const apiCall = ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [
+        {
+          inlineData: {
+            data: base64ImageData,
+            mimeType: mimeType,
+          },
+        },
+        {
+          text: prompt,
+        },
+      ],
+    },
+    config: {
+      // FIX: Per Gemini API guidelines, responseModalities for image editing must only contain Modality.IMAGE.
+      responseModalities: [Modality.IMAGE],
+    },
+  });
+
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              data: base64ImageData,
-              mimeType: mimeType,
-            },
-          },
-          {
-            text: prompt,
-          },
-        ],
-      },
-      config: {
-        responseModalities: [Modality.IMAGE, Modality.TEXT],
-      },
-    });
+    const response = await Promise.race([apiCall, timeoutPromise]);
 
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
 
@@ -76,6 +88,8 @@ export const editImage = async (
         throw new Error(`API call failed: ${error.message}`);
     }
     throw new Error("An unknown error occurred during the API call.");
+  } finally {
+      window.clearTimeout(timeoutId);
   }
 };
 
