@@ -161,7 +161,7 @@ const App: React.FC = () => {
       const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
       audioRef.current = new Audio(silentWav);
       audioRef.current.loop = true;
-      audioRef.current.muted = true;
+      audioRef.current.volume = 0;
     }
 
     if (isProcessing) {
