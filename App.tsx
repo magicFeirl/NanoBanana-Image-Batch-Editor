@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import JSZip from 'jszip';
 import ImageUploader from './components/ImageUploader';
 import PromptInput from './components/PromptInput';
@@ -155,6 +155,51 @@ const App: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imagesRef = useRef(images);
   imagesRef.current = images;
+
+  // Memoize derived data from the images array to optimize the processing loop.
+  // This avoids multiple expensive traversals (.filter, .some) on every render.
+  const {
+    queuedImages,
+    processingCount,
+    errorImagesToRetry,
+    hasProcessedImages
+  } = useMemo(() => {
+    const queued: ImageFile[] = [];
+    let processing = 0;
+    const retriable: ImageFile[] = [];
+    let processed = false;
+
+    for (const img of images) {
+      switch (img.status) {
+        case ImageStatus.QUEUED:
+          queued.push(img);
+          break;
+        case ImageStatus.PROCESSING:
+          processing++;
+          break;
+        case ImageStatus.ERROR:
+          if (!img.retried) {
+            retriable.push(img);
+          }
+          processed = true;
+          break;
+        case ImageStatus.COMPLETED:
+          processed = true;
+          break;
+      }
+    }
+    return {
+      queuedImages: queued,
+      processingCount: processing,
+      errorImagesToRetry: retriable,
+      hasProcessedImages: processed
+    };
+  }, [images]);
+
+  // Create a memoized map for quick ID-based lookups (O(1) complexity),
+  // which is much faster than .find() (O(n) complexity) inside a loop.
+  const imageMap = useMemo(() => new Map(images.map(i => [i.id, i])), [images]);
+
 
   // Effect to play silent audio during processing to keep the tab active.
   // This prevents the browser from throttling JavaScript in inactive tabs.
@@ -544,40 +589,41 @@ const App: React.FC = () => {
     if (hasPrompt && !promptHistory.includes(currentPrompt) && !pinnedPrompts.includes(currentPrompt)) {
       setPromptHistory(prev => [currentPrompt, ...prev.slice(0, 9)]);
     }
-
   }, [currentPrompt, images, isProcessing, promptHistory, pinnedPrompts, repeatCount, randomizeForEachEdit, randomizeSources, autoTagBeforeProcessing, taggingSystemPrompt, useNaturalLanguage]);
 
+  // The main processing loop effect, now optimized.
+  // This effect is responsible for picking up queued images and processing them
+  // based on the concurrency limit. It also handles auto-retrying failed images.
   useEffect(() => {
     if (!isProcessing || isCoolingDown) {
       return;
     }
-
-    const currentlyProcessingCount = images.filter(img => img.status === ImageStatus.PROCESSING).length;
-
-    if (currentlyProcessingCount >= concurrency) {
-      return; // All slots are full, wait for one to finish.
+    
+    // All concurrency slots are full, so we wait.
+    if (processingCount >= concurrency) {
+      return;
     }
-
-    const availableSlots = concurrency - currentlyProcessingCount;
-    const imagesToStart = images.filter(img => img.status === ImageStatus.QUEUED).slice(0, availableSlots);
-
+  
+    const availableSlots = concurrency - processingCount;
+    const imagesToStart = queuedImages.slice(0, availableSlots);
+  
+    // No more images in the queue to process.
     if (imagesToStart.length === 0) {
-      // If no images are queued and nothing is processing, check for retries or finish the batch.
-      if (currentlyProcessingCount === 0) {
-        const imagesToAutoRetry = images.filter(img => img.status === ImageStatus.ERROR && !img.retried);
-        
-        if (imagesToAutoRetry.length > 0) {
-          setStatusMessage(`Batch complete. Automatically retrying ${imagesToAutoRetry.length} failed image(s)...`);
-          
-          setImages(prevImages => 
-            prevImages.map(img => {
-              if (imagesToAutoRetry.some(retryImg => retryImg.id === img.id)) {
-                return { ...img, status: ImageStatus.QUEUED, error: undefined, retried: true };
-              }
-              return img;
-            })
+      // If nothing is currently processing, the batch might be done.
+      if (processingCount === 0) {
+        // Check if there are any failed images that we can auto-retry.
+        if (errorImagesToRetry.length > 0) {
+          setStatusMessage(`Batch complete. Automatically retrying ${errorImagesToRetry.length} failed image(s)...`);
+          const retryIds = new Set(errorImagesToRetry.map(img => img.id));
+          setImages(prevImages =>
+            prevImages.map(img =>
+              retryIds.has(img.id)
+                ? { ...img, status: ImageStatus.QUEUED, error: undefined, retried: true }
+                : img
+            )
           );
         } else {
+          // No more queued items and no items to retry, so we're finished.
           setIsProcessing(false);
           if (statusMessage.includes('Automatically retrying')) {
             setStatusMessage('');
@@ -586,94 +632,121 @@ const App: React.FC = () => {
       }
       return;
     }
-
+  
     if (statusMessage.includes('Automatically retrying')) {
-        setStatusMessage('');
+      setStatusMessage('');
     }
-    
-    const hasProcessedImages = images.some(i => i.status === ImageStatus.COMPLETED || i.status === ImageStatus.ERROR);
+  
     const delay = hasProcessedImages ? throttleDelay * 1000 : 0;
-
-    // Fire off processing for all available slots
+  
+    // Fire off processing for all available slots.
     imagesToStart.forEach(imageToProcess => {
-        setTimeout(async () => {
-          if (!isProcessingRef.current) return; // Stop if processing was cancelled
-
-          const imagePrompt = imageToProcess.prompt || '';
-
-          // For repeated images, we need the source data URL to send to the API
-          let sourceDataUrl = imageToProcess.originalDataUrl;
-          if (imageToProcess.sourceImageId) {
-            const sourceImage = images.find(i => i.id === imageToProcess.sourceImageId);
-            if (sourceImage) {
-              sourceDataUrl = sourceImage.originalDataUrl;
-            }
+      setTimeout(async () => {
+        // A safety check. If processing was cancelled while the timer was pending, do nothing.
+        if (!isProcessingRef.current) return;
+  
+        const imagePrompt = imageToProcess.prompt || '';
+  
+        // For repeated images, we need the source data URL from the original image.
+        // We use the memoized imageMap for efficient O(1) lookup.
+        let sourceDataUrl = imageToProcess.originalDataUrl;
+        if (imageToProcess.sourceImageId) {
+          const sourceImage = imageMap.get(imageToProcess.sourceImageId);
+          if (sourceImage) {
+            sourceDataUrl = sourceImage.originalDataUrl;
+          } else {
+              // Handle case where source image might have been deleted.
+              console.error(`Source image with id ${imageToProcess.sourceImageId} not found.`);
+              setImages(prev => prev.map(img =>
+                  img.id === imageToProcess.id
+                  ? { ...img, status: ImageStatus.ERROR, error: 'Source image not found.' }
+                  : img
+              ));
+              return;
           }
-    
-          setImages((prev) =>
-            prev.map((img) =>
+        }
+  
+        // Set status to "Processing"
+        setImages(prev =>
+          prev.map(img =>
+            img.id === imageToProcess.id
+              ? { ...img, status: ImageStatus.PROCESSING, prompt: imagePrompt, error: undefined }
+              : img
+          )
+        );
+  
+        try {
+          const base64Data = sourceDataUrl.split(',')[1];
+          if (!base64Data) throw new Error('Invalid image data URL.');
+  
+          const editedData = await editImage(
+            base64Data,
+            imageToProcess.file.type,
+            imagePrompt
+          );
+  
+          // Set status to "Completed" on success
+          setImages(prev =>
+            prev.map(img =>
               img.id === imageToProcess.id
-                ? { ...img, status: ImageStatus.PROCESSING, prompt: imagePrompt, error: undefined }
+                ? {
+                    ...img,
+                    status: ImageStatus.COMPLETED,
+                    editedDataUrl: `data:${imageToProcess.file.type};base64,${editedData}`,
+                  }
                 : img
             )
           );
-    
-          try {
-            const base64Data = sourceDataUrl.split(',')[1];
-            if (!base64Data) throw new Error('Invalid image data URL.');
-    
-            const editedData = await editImage(
-              base64Data,
-              imageToProcess.file.type,
-              imagePrompt
+          incrementProcessedTodayCount();
+        } catch (error) {
+          console.error('Error processing image:', error);
+  
+          if (error instanceof RateLimitError) {
+            // If we hit a rate limit, pause the queue and requeue the image.
+            setStatusMessage('API rate limit hit. Pausing queue for 15 seconds...');
+            setIsCoolingDown(true);
+            setImages(prev =>
+              prev.map(img =>
+                img.id === imageToProcess.id
+                  ? { ...img, status: ImageStatus.QUEUED, error: 'Rate limited. Will retry.' }
+                  : img
+              )
             );
-    
-            setImages((prev) =>
-              prev.map((img) =>
+            setTimeout(() => {
+              setStatusMessage('');
+              setIsCoolingDown(false);
+            }, 15000);
+          } else {
+            // Set status to "Error" for other failures.
+            setImages(prev =>
+              prev.map(img =>
                 img.id === imageToProcess.id
                   ? {
                       ...img,
-                      status: ImageStatus.COMPLETED,
-                      editedDataUrl: `data:${imageToProcess.file.type};base64,${editedData}`,
+                      status: ImageStatus.ERROR,
+                      error: error instanceof Error ? error.message : String(error),
                     }
                   : img
               )
             );
-            incrementProcessedTodayCount();
-          } catch (error) {
-            console.error('Error processing image:', error);
-    
-            if (error instanceof RateLimitError) {
-              setStatusMessage('API rate limit hit. Pausing queue for 15 seconds...');
-              setIsCoolingDown(true);
-              setImages(prev => prev.map(img => 
-                  img.id === imageToProcess.id 
-                  ? { ...img, status: ImageStatus.QUEUED, error: 'Rate limited. Will retry.' } 
-                  : img
-                )
-              );
-              setTimeout(() => {
-                setStatusMessage('');
-                setIsCoolingDown(false);
-              }, 15000);
-            } else {
-              setImages((prev) =>
-                prev.map((img) =>
-                  img.id === imageToProcess.id
-                    ? {
-                        ...img,
-                        status: ImageStatus.ERROR,
-                        error: error instanceof Error ? error.message : String(error),
-                      }
-                    : img
-                )
-              );
-            }
           }
-        }, delay);
+        }
+      }, delay);
     });
-    
-  }, [isProcessing, images, concurrency, throttleDelay, isCoolingDown, statusMessage, incrementProcessedTodayCount]);
+  }, [
+    isProcessing,
+    isCoolingDown,
+    concurrency,
+    throttleDelay,
+    statusMessage,
+    incrementProcessedTodayCount,
+    // Memoized dependencies:
+    queuedImages,
+    processingCount,
+    errorImagesToRetry,
+    hasProcessedImages,
+    imageMap,
+  ]);
   
   const handleDownloadAll = async () => {
     const completedImages = images.filter(
@@ -1186,11 +1259,11 @@ const App: React.FC = () => {
   };
 
   const queuedCount = images.filter(img => img.status === ImageStatus.QUEUED).length;
-  const processingCount = images.filter(img => img.status === ImageStatus.PROCESSING).length;
+  const processingCountDisplay = images.filter(img => img.status === ImageStatus.PROCESSING).length;
   const completedCount = images.filter(img => img.status === ImageStatus.COMPLETED).length;
   const failedCount = images.filter(img => img.status === ImageStatus.ERROR).length;
   const canRandomize = Object.values(randomizeSources).some(v => v);
-  const processedInBatch = totalInBatch > 0 ? Math.max(0, totalInBatch - queuedCount - processingCount) : 0;
+  const processedInBatch = totalInBatch > 0 ? Math.max(0, totalInBatch - queuedCount - processingCountDisplay) : 0;
   const { containerClasses, numberClasses } = getCounterStyles(processedTodayCount);
 
   return (
@@ -1796,7 +1869,7 @@ const App: React.FC = () => {
             <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-400 mb-4">
               <span><b>Total:</b> {images.length}</span>
               <span className="text-yellow-400"><b>Queued:</b> {queuedCount}</span>
-              <span className="text-brand-blue"><b>Processing:</b> {processingCount}</span>
+              <span className="text-brand-blue"><b>Processing:</b> {processingCountDisplay}</span>
               <span className="text-green-400"><b>Completed:</b> {completedCount}</span>
               <span className="text-red-400"><b>Failed:</b> {failedCount}</span>
               {(isProcessing || elapsedTime > 0) && (
