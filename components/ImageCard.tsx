@@ -1,14 +1,17 @@
+
 import React from 'react';
 import { ImageFile, ImageStatus } from '../types';
-import { ClockIcon, CheckCircleIcon, ExclamationTriangleIcon, SparklesIcon, EditIcon, ReplaceIcon, DownloadIcon, TrashIcon } from './Icons';
+import { ClockIcon, CheckCircleIcon, ExclamationTriangleIcon, SparklesIcon, EditIcon, ReplaceIcon, DownloadIcon, TrashIcon, EyeIcon } from './Icons';
 
 interface ImageCardProps {
   image: ImageFile;
+  displayOriginalDataUrl: string;
   onEdit: (imageId: string, source: 'original' | 'edited') => void;
   onUseAsOriginal: (imageId: string) => void;
   onImageClick: (url: string, alt: string) => void;
   onDownload: (imageId: string, source: 'original' | 'edited') => void;
   onDelete: (imageId: string) => void;
+  onShowOriginal: (imageId: string) => void;
 }
 
 const StatusIndicator: React.FC<{ status: ImageStatus }> = ({ status }) => {
@@ -46,7 +49,7 @@ const StatusIndicator: React.FC<{ status: ImageStatus }> = ({ status }) => {
   }
 };
 
-const ImageCard: React.FC<ImageCardProps> = ({ image, onEdit, onUseAsOriginal, onImageClick, onDownload, onDelete }) => {
+const ImageCard: React.FC<ImageCardProps> = ({ image, displayOriginalDataUrl, onEdit, onUseAsOriginal, onImageClick, onDownload, onDelete, onShowOriginal }) => {
   const getBorderColor = () => {
     switch (image.status) {
       case ImageStatus.QUEUED: return 'border-yellow-500/50';
@@ -89,6 +92,11 @@ const ImageCard: React.FC<ImageCardProps> = ({ image, onEdit, onUseAsOriginal, o
     onDelete(image.id);
   };
 
+  const handleShowOriginalClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onShowOriginal(image.id);
+  };
+
   return (
     <div className={`bg-gray-800 rounded-lg overflow-hidden shadow-lg border-2 ${getBorderColor()} transition-all duration-300`}>
       <div className="p-4">
@@ -111,13 +119,30 @@ const ImageCard: React.FC<ImageCardProps> = ({ image, onEdit, onUseAsOriginal, o
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-gray-700">
         <div className="relative group">
-          <img 
-            src={image.originalDataUrl} 
-            alt={`Original - ${image.file.name}`} 
-            className="w-full h-auto object-cover cursor-pointer" 
-            onClick={() => onImageClick(image.originalDataUrl, `Original - ${image.file.name}`)}
-          />
-          <div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">Original</div>
+          {image.isRepeat && !image.showOriginal ? (
+            <div className="bg-gray-900 flex items-center justify-center min-h-[150px] w-full h-full">
+                <div className="p-4 text-center animate-fade-in">
+                    <button
+                        onClick={handleShowOriginalClick}
+                        className="flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-brand-purple rounded-lg shadow-lg hover:bg-purple-700 transition-all duration-300 transform hover:scale-105"
+                    >
+                        <EyeIcon className="w-5 h-5 mr-2" />
+                        Show Original
+                    </button>
+                    <p className="text-xs text-gray-500 mt-2">(Reduces memory usage)</p>
+                </div>
+            </div>
+           ) : (
+             <>
+                <img
+                    src={displayOriginalDataUrl}
+                    alt={`Original - ${image.file.name}`}
+                    className="w-full h-auto object-cover cursor-pointer"
+                    onClick={() => onImageClick(displayOriginalDataUrl, `Original - ${image.file.name}`)}
+                />
+                <div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">Original</div>
+            </>
+           )}
            <div className="absolute top-2 right-2 flex items-center space-x-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
              <button onClick={handleDownloadOriginalClick} title="Download original image" className="p-1.5 rounded-full bg-black/50 text-white hover:bg-green-500">
                 <DownloadIcon className="w-5 h-5" />
@@ -167,4 +192,4 @@ const ImageCard: React.FC<ImageCardProps> = ({ image, onEdit, onUseAsOriginal, o
   );
 };
 
-export default ImageCard;
+export default React.memo(ImageCard);

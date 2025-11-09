@@ -62,13 +62,14 @@ const ImageEditModal: React.FC<ImageEditModalProps> = ({ image, source, onClose,
         const base64Data = activeImageUrl.split(',')[1];
         if (!base64Data) throw new Error('Invalid image data URL.');
 
-        const tags = await getTagsFromImage(
+        const tagsResponse = await getTagsFromImage(
             base64Data,
             image.file.type,
             taggingSystemPrompt
         );
         onMarkAsAutoTagged(image.id); // Mark as tagged on successful API call
-        const cleanedTags = tags.replace(/\.$/, '').trim();
+        const tagsPart = tagsResponse.split('.')[0];
+        const cleanedTags = tagsPart.replace(/\.$/, '').trim();
         const allTags = cleanedTags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
         const uniqueTags = [...new Set(allTags)].join(', ');
         return uniqueTags;

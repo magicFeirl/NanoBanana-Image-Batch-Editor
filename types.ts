@@ -23,4 +23,7 @@ export interface ImageFile {
   retried?: boolean;
   history?: EditHistory[];
   hasBeenAutoTaggedInModal?: boolean;
+  isRepeat?: boolean;
+  showOriginal?: boolean;
+  sourceImageId?: string;
 }

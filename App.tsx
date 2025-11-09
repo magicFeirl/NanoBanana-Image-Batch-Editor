@@ -45,20 +45,20 @@ const safeLocalStorage = {
 };
 
 const taggingPresets = [
-  { 
-    key: 'general', 
-    label: 'General', 
-    prompt: "You are an expert image analyst. Your task is to generate a concise, comma-separated list of tags describing the key elements of the image, including subject, style, colors, and composition. Focus on keywords useful for AI image generation. Keep it brief." 
+  {
+    key: 'general',
+    label: 'General',
+    prompt: "You are an expert image analyst. Your task is to generate a concise, comma-separated list of Danbooru-style tags describing the key elements of the image, including subject, style, colors, and composition. After the tags, add a period '.' and then a short, descriptive sentence in natural language about the image. Keep both parts brief and useful for AI image generation. Example output: '1girl, solo, school_uniform, classroom, sunlight. A girl in a school uniform is sitting in a sunlit classroom.'"
   },
-  { 
-    key: 'character', 
-    label: 'Character (No Features)', 
-    prompt: "You are an expert image analyst specializing in character art. Your task is to generate a concise, comma-separated list of tags describing everything EXCEPT the character's specific features like hair color, eye color, or clothing. Focus on tags for pose, expression, composition, background, and overall art style. Keep it brief and useful for AI image generation."
+  {
+    key: 'character',
+    label: 'Character (No Features)',
+    prompt: "You are an expert image analyst specializing in character art. Your task is to generate a concise, comma-separated list of Danbooru-style tags describing everything EXCEPT the character's specific features like hair color, eye color, or clothing. Focus on tags for pose, expression, composition, background, and overall art style. After the tags, add a period '.' and then a short, descriptive sentence in natural language about these aspects. Keep it brief and useful for AI image generation. Example output: 'sitting, smiling, high-angle_shot, cityscape_background, anime_style. A smiling girl is sitting with a city in the background, drawn in an anime style.'"
   },
-  { 
-    key: 'character_only', 
-    label: 'Character Only (Features)', 
-    prompt: "You are a specialized image tagger. Your only task is to generate comma-separated tags for the character's eye color, hair color, and clothing from the image provided. Do not include any other information. Focus exclusively on these three categories. Output only the tags."
+  {
+    key: 'character_only',
+    label: 'Character Only (Features)',
+    prompt: "You are a specialized image tagger. Your task is to generate comma-separated Danbooru-style tags for the character's eye color, hair color, and clothing from the image provided. After the tags, add a period '.' and then a short, descriptive sentence in natural language about the character's features. Focus exclusively on these three categories for both tags and the sentence. Example output: 'blue_eyes, blonde_hair, white_dress. A girl with blue eyes and long blonde hair is wearing a white dress.'"
   },
 ];
 
@@ -153,6 +153,8 @@ const App: React.FC = () => {
   const isProcessingRef = useRef(isProcessing);
   isProcessingRef.current = isProcessing;
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
 
   // Effect to play silent audio during processing to keep the tab active.
   // This prevents the browser from throttling JavaScript in inactive tabs.
@@ -349,8 +351,9 @@ const App: React.FC = () => {
                 try {
                     const base64Data = imageToTag.originalDataUrl.split(',')[1];
                     if (!base64Data) throw new Error('Invalid image data URL.');
-                    const tags = await getTagsFromImage(base64Data, imageToTag.file.type, taggingSystemPrompt);
-                    const cleanedTags = tags.replace(/\.$/, '').trim();
+                    const tagsResponse = await getTagsFromImage(base64Data, imageToTag.file.type, taggingSystemPrompt);
+                    const tagsPart = tagsResponse.split('.')[0];
+                    const cleanedTags = tagsPart.replace(/\.$/, '').trim();
                     const allTags = cleanedTags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
                     const uniqueTags = [...new Set(allTags)];
                     return { id: imageToTag.id, prompt: uniqueTags.join(', '), error: undefined };
@@ -440,11 +443,26 @@ const App: React.FC = () => {
                     }
                 }
                 
-                return Array.from({ length: repeatCount }, (_, i) => ({
+                const sourceItem: ImageFile = {
                     ...image,
-                    id: `${image.id}-repeat-${i}-${Date.now()}-${Math.random()}`,
-                    prompt: promptsForImage[i],
-                }));
+                    id: `${image.id}-repeat-0-${Date.now()}-${Math.random()}`,
+                    prompt: promptsForImage[0],
+                    isRepeat: false,
+                    showOriginal: true,
+                };
+                const repeatItems = Array.from({ length: repeatCount - 1 }, (_, i) => {
+                    const { originalDataUrl, ...restOfImage } = image;
+                    return {
+                        ...restOfImage,
+                        originalDataUrl: '',
+                        id: `${image.id}-repeat-${i + 1}-${Date.now()}-${Math.random()}`,
+                        prompt: promptsForImage[i + 1],
+                        isRepeat: true,
+                        showOriginal: false,
+                        sourceImageId: sourceItem.id,
+                    };
+                });
+                return [sourceItem, ...repeatItems];
             });
         } else { // Handles repeatCount = 1 with randomization
             allQueuedImages = queuedImages.map(image => {
@@ -471,7 +489,7 @@ const App: React.FC = () => {
                     finalPrompt = Array.from(allTags).join(', ');
                 }
                 
-                return { ...image, prompt: finalPrompt };
+                return { ...image, prompt: finalPrompt, isRepeat: false, showOriginal: true };
             });
         }
     } else {
@@ -490,18 +508,28 @@ const App: React.FC = () => {
             return {
                 ...image,
                 prompt: finalPrompt,
+                isRepeat: false,
+                showOriginal: true,
             };
         });
-
-        allQueuedImages = [...allQueuedImagesWithPrompts];
+        
         if (repeatCount > 1) {
-            const newCopies = allQueuedImagesWithPrompts.flatMap(image =>
-                Array.from({ length: repeatCount - 1 }, (_, i) => ({
-                    ...image,
-                    id: `${image.id}-repeat-${i + 1}-${Date.now()}-${Math.random()}`,
-                }))
-            );
-            allQueuedImages.push(...newCopies);
+            allQueuedImages = allQueuedImagesWithPrompts.flatMap(sourceImage => {
+                const copies = Array.from({ length: repeatCount - 1 }, (_, i) => {
+                    const { originalDataUrl, ...restOfImage } = sourceImage;
+                    return {
+                        ...restOfImage,
+                        originalDataUrl: '',
+                        id: `${sourceImage.id}-repeat-${i + 1}-${Date.now()}-${Math.random()}`,
+                        isRepeat: true,
+                        showOriginal: false,
+                        sourceImageId: sourceImage.id,
+                    };
+                });
+                return [sourceImage, ...copies];
+            });
+        } else {
+            allQueuedImages = allQueuedImagesWithPrompts;
         }
     }
     
@@ -572,6 +600,15 @@ const App: React.FC = () => {
           if (!isProcessingRef.current) return; // Stop if processing was cancelled
 
           const imagePrompt = imageToProcess.prompt || '';
+
+          // For repeated images, we need the source data URL to send to the API
+          let sourceDataUrl = imageToProcess.originalDataUrl;
+          if (imageToProcess.sourceImageId) {
+            const sourceImage = images.find(i => i.id === imageToProcess.sourceImageId);
+            if (sourceImage) {
+              sourceDataUrl = sourceImage.originalDataUrl;
+            }
+          }
     
           setImages((prev) =>
             prev.map((img) =>
@@ -582,7 +619,7 @@ const App: React.FC = () => {
           );
     
           try {
-            const base64Data = imageToProcess.originalDataUrl.split(',')[1];
+            const base64Data = sourceDataUrl.split(',')[1];
             if (!base64Data) throw new Error('Invalid image data URL.');
     
             const editedData = await editImage(
@@ -706,45 +743,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDownloadSingle = async (imageId: string, source: 'original' | 'edited' = 'edited') => {
-    const image = images.find(img => img.id === imageId);
-    if (!image) {
-        console.error("Image not found for download.");
-        return;
-    }
-
-    const urlToDownload = source === 'original' ? image.originalDataUrl : image.editedDataUrl;
-    const suffix = source === 'original' ? 'original' : 'edited';
-    
-    if (!urlToDownload) {
-        console.error(`Source URL for '${suffix}' version not available.`);
-        return;
-    }
-
-    let downloadUrl = urlToDownload;
-    let extension = image.file.type.split('/')[1] || 'png';
-
-    if (enableCompression) {
-        try {
-            downloadUrl = await compressImageToPNG(urlToDownload);
-            extension = 'png';
-        } catch (error) {
-            console.error("Failed to compress image:", error);
-            alert(`Failed to compress image. Downloading ${suffix} version.`);
-        }
-    }
-
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-
-    const originalName = image.file.name.replace(/\.[^/.]+$/, "");
-    link.download = `${originalName}-${suffix}.${extension}`;
-
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   const handleRetryFailed = () => {
     if (isProcessing) return;
 
@@ -765,12 +763,12 @@ const App: React.FC = () => {
     setIsProcessing(true);
   };
 
-  const handleOpenEditModal = (imageId: string, source: 'original' | 'edited' = 'edited') => {
-    const imageToEdit = images.find(img => img.id === imageId);
+  const handleOpenEditModal = useCallback((imageId: string, source: 'original' | 'edited' = 'edited') => {
+    const imageToEdit = imagesRef.current.find(img => img.id === imageId);
     setEditingImage(imageToEdit || null);
     setEditSource(source);
     setSingleProcessingError(null);
-  };
+  }, []);
   
   const handleCloseEditModal = () => {
     setEditingImage(null);
@@ -863,8 +861,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUseEditedAsOriginal = (imageId: string) => {
-    if (isProcessing) {
+  const handleUseEditedAsOriginal = useCallback((imageId: string) => {
+    if (isProcessingRef.current) {
       setTotalInBatch(prev => prev + 1);
     }
 
@@ -879,11 +877,14 @@ const App: React.FC = () => {
           error: undefined,
           retried: undefined,
           history: undefined,
+          isRepeat: false,
+          showOriginal: true,
+          sourceImageId: undefined,
         };
       }
       return img;
     }));
-  };
+  }, []);
 
   const handleUseAllEditedAsOriginal = () => {
     const completedImages = images.filter(img => img.status === ImageStatus.COMPLETED && img.editedDataUrl);
@@ -907,6 +908,9 @@ const App: React.FC = () => {
           error: undefined,
           retried: undefined,
           history: undefined,
+          isRepeat: false,
+          showOriginal: true,
+          sourceImageId: undefined,
         };
       }
       return img;
@@ -1048,13 +1052,14 @@ const App: React.FC = () => {
             const base64Data = imageToTag.originalDataUrl.split(',')[1];
             if (!base64Data) throw new Error('Invalid image data URL.');
 
-            const tags = await getTagsFromImage(
+            const tagsResponse = await getTagsFromImage(
                 base64Data,
                 imageToTag.file.type,
                 taggingSystemPrompt
             );
 
-            const cleanedTags = tags.replace(/\.$/, '').trim();
+            const tagsPart = tagsResponse.split('.')[0];
+            const cleanedTags = tagsPart.replace(/\.$/, '').trim();
             const allTags = cleanedTags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
             const uniqueTags = [...new Set(allTags)];
             return { id: imageToTag.id, prompt: uniqueTags.join(', '), error: undefined };
@@ -1101,9 +1106,9 @@ const App: React.FC = () => {
       }
   };
 
-  const handleDeleteImage = (imageId: string) => {
+  const handleDeleteImage = useCallback((imageId: string) => {
     setImages(prevImages => prevImages.filter(img => img.id !== imageId));
-  };
+  }, []);
 
   const handleMarkAsAutoTagged = (imageId: string) => {
     setImages(prev => prev.map(img => 
@@ -1112,7 +1117,68 @@ const App: React.FC = () => {
       : img
     ));
   };
+
+  const handleShowOriginal = useCallback((imageId: string) => {
+    setImages(prevImages =>
+      prevImages.map(img =>
+        img.id === imageId ? { ...img, showOriginal: true } : img
+      )
+    );
+  }, []);
   
+  const handleImageClick = useCallback((url: string, alt: string) => {
+    setLightboxImage({ url, alt });
+  }, []);
+
+  const handleDownloadSingle = useCallback(async (imageId: string, source: 'original' | 'edited' = 'edited') => {
+    const image = imagesRef.current.find(img => img.id === imageId);
+    if (!image) {
+        console.error("Image not found for download.");
+        return;
+    }
+
+    let urlToDownload: string | undefined;
+
+    if (source === 'original') {
+        if (image.sourceImageId) {
+            const sourceImage = imagesRef.current.find(i => i.id === image.sourceImageId);
+            urlToDownload = sourceImage?.originalDataUrl;
+        } else {
+            urlToDownload = image.originalDataUrl;
+        }
+    } else {
+        urlToDownload = image.editedDataUrl;
+    }
+    
+    if (!urlToDownload) {
+        console.error(`Source URL for '${source}' version not available.`);
+        return;
+    }
+
+    let downloadUrl = urlToDownload;
+    let extension = image.file.type.split('/')[1] || 'png';
+
+    if (enableCompression) {
+        try {
+            downloadUrl = await compressImageToPNG(urlToDownload);
+            extension = 'png';
+        } catch (error) {
+            console.error("Failed to compress image:", error);
+            alert(`Failed to compress image. Downloading ${source} version.`);
+        }
+    }
+
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+
+    const originalName = image.file.name.replace(/\.[^/.]+$/, "");
+    link.download = `${originalName}-${source}.${extension}`;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [enableCompression]);
+
   const formatTime = (totalSeconds: number) => {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
@@ -1751,9 +1817,10 @@ const App: React.FC = () => {
               images={images} 
               onEdit={handleOpenEditModal} 
               onUseAsOriginal={handleUseEditedAsOriginal}
-              onImageClick={(url, alt) => setLightboxImage({ url, alt })}
+              onImageClick={handleImageClick}
               onDownload={handleDownloadSingle}
               onDelete={handleDeleteImage}
+              onShowOriginal={handleShowOriginal}
             />
           </div>
         </main>
